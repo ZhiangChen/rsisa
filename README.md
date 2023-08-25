@@ -1,13 +1,37 @@
 # Remote Sensing Instance Segmentation Algorithms (RSISA)
 
+## Instance Segmentation
+<div style="display: flex; justify-content: center;">
+  <img src="./docs/figure1.png" alt="Image 1" style="width: 40%; margin-right: 3px;">
+  <img src="./docs/figure2.png" alt="Image 2" style="width: 40%; margin-left: 3px;">
+</div>
+
+Instance segmentation generates pixel-level masks for each individual instance and assignes a unique label or identifier to each mask. This package provides efficient methods to address the two critical data-processing challenges that hinder instance segmentation applications in remote sensing.
+
+
 ## Installation
+*Option 1*: `docker` (recommended) 
+```
+git clone https://github.com/ZhiangChen/instance_segmentation_remote_sensing.git
+cd rsisa/docker
+docker build -t rsisa .
+docker run -p 8888:8888 -it --name rsisa -v $(pwd)/../:/root/rsisa/ rsisa
+```
+See [bash_help.md](./docker/bash_help.md) for more docker commands. The docker container configures the package environment, allowing to install the package in the container:
+```
+cd /root/rsisa/rsisa
+pip install .
+```
+
+*Option 2*: `pip` (need to install requirements; see [setup.py](./rsisa/setup.py))
+```
+pip install rsisa
+```
 
 ## Tutorial
+
+
 
 ## Test
 
 
-## Updates
-Added two methods to improve space complexity:
-1. if an instance is in the middle of a tile, only global mask will be kept in the instances list.
-2. the tile manager dynamically save instances to a shapefile when an tile's adjacent tiles have been registered. At the same time, the saved instances will be deleted in mememory. steps: 1) sort tile indices; 2) given a tile index, check if each of its adjacent tile has already been registered; 3) if no, continue to check next adjacent tile; if yes, check if all adjacent tiles of the adjacent tile have been registered; 4) if yes, save the adjacent tile. 

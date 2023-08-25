@@ -23,17 +23,17 @@ from tqdm import tqdm
 import tracemalloc
 
 class Tile_Splitter(object):
-    def __init__(self, shapefile_path, save_dir, crs, area_x1, area_y1, area_x2, area_y2, tile_size, overlap, tif_path, keep_instance_tif=True):
+    def __init__(self, shapefile_path, save_dir, crs, area_x1=0, area_y1=0, area_x2=30, area_y2=30, tile_size=10, overlap=1, tif_path=None, keep_instance_tif=True):
         """Split an annotation map to annotation tiles (shapefiles). It provides an option to split the corresponding tif map. 
 
         Args:
             shapefile_path (string): path of the shapefile to be split
             save_dir (string): path of the split shapefiles to be saved
             crs (_type_): coordinate reference system (e.g., from fiona.crs import from_epsg)
-            area_x1 (float): area small coordinate x in meters. Not required if tif_path is not None.
-            area_y1 (float): area small coordinate y in meters.
-            area_x2 (float): area large coordinate x in meters. (x2, y2) are used to intially decide the study area. The actual study are will also consider the tile_size in the last tiles.
-            area_y2 (float): area large coordinate y in meters.
+            area_x1 (float): study area coordinate x1 in meters. Not required if tif_path is not None. (x1, y1) are small coordinates; (x2, y2) are large coordinates. 
+            area_y1 (float): study area coordinate y1 in meters.
+            area_x2 (float): study area coordinate x2 in meters. (x2, y2) are used to intially decide the study area. The actual study are will also consider the tile_size in the last tiles.
+            area_y2 (float): study area coordinate y2 in meters.
             tile_size (float): in meters
             overlap (float): overlap between tiles in meters.
             tif_path (string or None): path of the tif file to be split. None if only shapefile is to be split.
@@ -131,7 +131,7 @@ class Tile_Splitter(object):
                 clipped_tif.rio.to_raster(f)
                 #print(f)
         else:
-            coords = np.array(list(ts.tiles.keys()))
+            coords = np.array(list(self.tiles.keys()))
           
             X = np.max(coords[:, 0])
             Y = np.max(coords[:, 1])
@@ -157,20 +157,20 @@ class Tile_Splitter(object):
             instance_polys = self.tiles[tile_index]
             schema = {'geometry':'Polygon', 'properties':[('id','str')]}
             f = os.path.join(self.tile_dir, "{x}_{y}.shp".format(x=tile_index[0], y=tile_index[1]))
-            #print(f)
             polyShp = fiona.open(f, mode='w', driver='ESRI Shapefile', schema = schema, crs = self.crs)
             for instance_poly, id in instance_polys:
                 if isinstance(instance_poly, shapely.geometry.multipolygon.MultiPolygon):
+                    instance_poly = list(instance_poly.geoms)
                     for ins_poly in instance_poly:
                         x,y = ins_poly.exterior.coords.xy
                         xy = np.asarray((x,y)).transpose()
                         rowDict = {'geometry' : {'type':'Polygon', 'coordinates': [xy]}, 'properties': {'id': id}}
                         polyShp.write(rowDict)
-                    continue
-                x,y = instance_poly.exterior.coords.xy
-                xy = np.asarray((x,y)).transpose()
-                rowDict = {'geometry' : {'type':'Polygon', 'coordinates': [xy]}, 'properties': {'id': id}}
-                polyShp.write(rowDict)
+                else:
+                    x,y = instance_poly.exterior.coords.xy
+                    xy = np.asarray((x,y)).transpose()
+                    rowDict = {'geometry' : {'type':'Polygon', 'coordinates': [xy]}, 'properties': {'id': id}}
+                    polyShp.write(rowDict)
 
             polyShp.close()
             
@@ -262,7 +262,7 @@ class Tile_Splitter(object):
                 
                 
 class Dataset(object):
-    def __init__(self, pixel_size, split_path, input_channel=(0,1,2)):
+    def __init__(self, pixel_size, split_path, input_channel=(0,1,2), max_tile_number=100000):
         """create training dataset (pickle files) from split tiles (split shapefiles and tiff files). 
 
         Args:
@@ -277,8 +277,17 @@ class Dataset(object):
         coords = np.array(coords)
         self.X = np.max(coords[:, 0])
         self.Y = np.max(coords[:, 1])
-        x_edge_file = os.path.join(data_path, '{i}_0.tif'.format(i=self.X))
-        y_edge_file = os.path.join(data_path, '0_{i}.tif'.format(i=self.Y))
+        
+        for k in range(max_tile_number):
+            x_edge_file = os.path.join(data_path, '{i}_{k}.tif'.format(i=self.X, k=k))
+            if os.path.exists(x_edge_file):
+                break
+        
+        for k in range(max_tile_number):
+            y_edge_file = os.path.join(data_path, '{k}_{i}.tif'.format(k=k, i=self.Y))
+            if os.path.exists(y_edge_file):
+                break
+            
         x_edge_tif = rasterio.open(x_edge_file)
         y_edge_tif = rasterio.open(y_edge_file)
         h, w = x_edge_tif.shape
@@ -408,6 +417,7 @@ class Dataset(object):
         masks = masks.max(axis=0) * 255
         masks = Image.fromarray(masks)
         masks.save(os.path.join(self.data_path, "masks.png"))
+        print("image saved to " + os.path.join(self.data_path, "masks.png"))
         #display(masks) 
         #masks.show()
 
@@ -424,7 +434,12 @@ class Dataset(object):
             print("No objects in the tif")
             return
         image = (np.moveaxis(image, 0, -1)*255).astype(np.uint8)
+        
         image1 = np.zeros_like(image)
+        
+        image = image.copy()
+        image1 = image1.copy()
+        
         boxes = target['boxes']
         masks = target["masks"]
         masks = masks>0.5
@@ -439,11 +454,12 @@ class Dataset(object):
         if bbox:
             for i, box in enumerate(boxes):
                 if not random_color:
-                    image = cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (255, 0, 255), 2)
+                    cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), (255, 0, 255), 2)
                 else:
                     color = tuple([int(c*255) for c in colors[i]])
-                    image = cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, 2)
+                    cv2.rectangle(image, (box[0], box[1]), (box[2], box[3]), color, 2)
         cv2.imwrite(os.path.join(self.data_path, 'overlap.png'), image)
+        print("image saved to " + os.path.join(self.data_path, 'overlap.png'))
         if not random_color:
             for mask in masks:
                 image1 = self.apply_mask(image1, mask, (1,1,1), alpha=1)
@@ -453,11 +469,12 @@ class Dataset(object):
         if bbox:
             for i, box in enumerate(boxes):
                 if not random_color:
-                    image1 = cv2.rectangle(image1, (box[0], box[1]), (box[2], box[3]), (255, 255, 255), 2)
+                    cv2.rectangle(image1, (box[0], box[1]), (box[2], box[3]), (255, 255, 255), 2)
                 else:
                     color = tuple([int(c*255) for c in colors[i]])
-                    image1 = cv2.rectangle(image1, (box[0], box[1]), (box[2], box[3]), color, 2)
+                    cv2.rectangle(image1, (box[0], box[1]), (box[2], box[3]), color, 2)
         cv2.imwrite(os.path.join(self.data_path, 'overlap_background.png'), image1)
+        print("image saved to " + os.path.join(self.data_path, 'overlap_background.png'))
         
 
     def show_bbox(self, idx):

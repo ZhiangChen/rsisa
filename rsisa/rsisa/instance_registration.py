@@ -24,6 +24,7 @@ class Instance_Registration(object):
                  tif_width_pixel = 1000,
                  tif_height_res = -0.01,
                  tif_width_res = 0.01,
+                 tif_map_file = None,
                  tile_overlap_ratio=0.1, 
                  detection_threshold=0.75, 
                  segmentation_threshold=0.5, 
@@ -41,12 +42,13 @@ class Instance_Registration(object):
             tif_width_pixel (int, optional): tif file width in pixel. Defaults to 1000.
             tif_height_res (float, optional): tif file resolution in height, meters per pixel. Origin of a tif file is at top left, thus the pixel size in height is negative. This argument can be found using `dalinfo x.tif`. Pixel Size = (0.010000000000000,-0.010000000000000). Defaults to -0.01.
             tif_width_res (float, optional): tif file resolution in width, meters per pixel. Defaults to 0.01.
+            tif_map_file (string, optional): the path of the tif map.
             tile_overlap_ratio (float, optional): tile overlap ratio scale. For example, if overlap is 1 m and tile height is 10 m, then the tile_overlap_ratio is 0.1. Defaults to 0.1.
             detection_threshold (float, optional): only instances with detection scores greater than the detection_threshold will be considered for instance registration. Defaults to 0.75.
             segmentation_threshold (float, optional): only pixels with segmentation scores greater than the segmentation threshold will be considered for instance registration. Defaults to 0.5.
             iou_threshold (float, optional): if polygons from two instances at their overlap region exceed the iou_threshold, the two instances will be merged. Defaults to 0.5.
             disable_merge (bool, optional): skip instance registration in True. Defaults to False.
-            test (bool, optional): set True if masks in pickle files has three dimensions; set False for three dimensions. This difference is caused by the fact that real instance segmentation and fake ellipse generation have different dimensions for masks. Defaults to True.
+            test (bool, optional): set True if masks in pickle files has three dimensions; set False for four dimensions. This difference is caused by the fact that real instance segmentation and fake ellipse generation have different dimensions for masks. Defaults to True.
         """
         
         
@@ -76,12 +78,15 @@ class Instance_Registration(object):
         
         self.tiles = {}
         self.instances = []  # 
-        tile_data = self._get_instance(self.tile_files[0])
+        tile_data = self._get_instance(self.tile_files[1])
         self.test = test
         if self.test == True:
             _, self.h, self.w = tile_data['masks'].shape
         else:
             _, _, self.h, self.w = tile_data['masks'].shape
+            
+        #print(self.h, self.w)
+        
         tif_name = tile_data['image_name']
         tif = rioxarray.open_rasterio(tif_name)
         epsg = tif.rio.crs.to_epsg()
@@ -91,26 +96,33 @@ class Instance_Registration(object):
         
         self.tiff_h, self.tiff_w = tif_height_pixel, tif_width_pixel
         self.tif_h_size, self.tif_v_size = tif_width_res, tif_height_res
+        
+        #print(self.tiff_h, self.tiff_w)
 
         self.mask_h_size = self.tif_h_size * self.tiff_h / self.h
         self.mask_v_size = self.tif_v_size * self.tiff_w / self.w
         self.overlap = int(self.h * tile_overlap_ratio)
+        self.overlap_float = self.h * tile_overlap_ratio
         self.iou_threshold = iou_threshold
-        dir_path = os.path.dirname(os.path.realpath(tif_name))
-        tif_name = os.path.join(dir_path, '0_0.tif')
-        #assert os.path.isfile(tif_name)
-        #tif = rioxarray.open_rasterio(tif_name)
-        #self.h_start, self.v_start, _, _= tif.rio.bounds()
-        self.h_start, self.v_start = 0, 0
-
+        
+        #print(self.mask_h_size, self.mask_v_size)
+        
+        #print(self.mask_h_size, self.mask_v_size)
+        
+        if tif_map_file is None:
+            self.h_start, self.v_start = 0, 0
+        else:
+            #dir_path = os.path.dirname(os.path.realpath(tif_name))
+            #tif_name = os.path.join(dir_path, '0_0.tif')
+            assert os.path.isfile(tif_map_file)
+            tif = rioxarray.open_rasterio(tif_map_file)
+            self.h_start, self.v_start, _, _= tif.rio.bounds()
+            
         self.save_shapefile = save_shapefile
         self.detection_threshold = detection_threshold
         self.segmentation_threshold = segmentation_threshold
         self.disable_merge = disable_merge
         self.twins = []
-        
-        
-        
         
         
     def start_registration(self, continue_regitration=False):
@@ -172,6 +184,9 @@ class Instance_Registration(object):
                 locations = self._get_locations(contour, local_mask, tile_indices)
                 # convert masks to global mask
                 global_mask = self._convert_global_mask(local_mask, tile_indices)
+                if len(global_mask)<4:
+                    continue
+                
                 # get global bbox
                 global_bbox = self._get_global_bbox(global_mask)
                 # instance registration
@@ -463,8 +478,8 @@ class Instance_Registration(object):
     
         
     def _convert_global_mask(self, mask, tile_indices):
-        x = tile_indices[0] * (self.w - self.overlap)
-        y = tile_indices[1] * (self.h - self.overlap) + self.h
+        x = int(tile_indices[0] * (self.w - self.overlap_float))
+        y = int(tile_indices[1] * (self.h - self.overlap_float) + self.h)
         return tuple([(x+i, y-j) for j,i in np.asarray(np.nonzero(mask)).transpose()])
     
     def _get_global_bbox(self, mask):
@@ -571,15 +586,33 @@ class Instance_Registration(object):
         mask_shape = (int(bbox[2] - bbox[0]) + 1, int(bbox[3] - bbox[1]) + 1)  
         local_mask = self._create_bool_mask(local_mask, mask_shape)
         contours, _ = cv2.findContours(local_mask.astype(np.uint8).copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
-        assert len(contours) == 1
-        contour = np.asarray(contours[0]) + bottom_left
-        contour = contour.reshape(-1, 2).tolist()
-        coords = [(self.h_start + pixel[0]*self.mask_h_size, 
-                   self.v_start - pixel[1]*self.mask_v_size) 
-                  for pixel in contour]
-        coords = np.asarray(coords)
-        poly = Polygon(zip(coords[:, 0].tolist(), coords[:, 1].tolist()))
-        return poly
+
+        if len(contours) == 1:
+            contour = np.asarray(contours[0]) + bottom_left
+            contour = contour.reshape(-1, 2).tolist()
+            coords = [(self.h_start + pixel[0]*self.mask_h_size, 
+                    self.v_start - pixel[1]*self.mask_v_size) 
+                    for pixel in contour]
+            coords = np.asarray(coords)
+            poly = Polygon(zip(coords[:, 0].tolist(), coords[:, 1].tolist()))
+            return poly
+        else:
+            max_area = 0
+            max_contour = None
+
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area > max_area:
+                    max_area = area
+                    max_contour = contour
+            contour = np.asarray(max_contour) + bottom_left
+            contour = contour.reshape(-1, 2).tolist()
+            coords = [(self.h_start + pixel[0]*self.mask_h_size, 
+                    self.v_start - pixel[1]*self.mask_v_size) 
+                    for pixel in contour]
+            coords = np.asarray(coords)
+            poly = Polygon(zip(coords[:, 0].tolist(), coords[:, 1].tolist()))
+            return poly
 
         
     def _create_bool_mask(self, mask, size):
