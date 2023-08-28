@@ -1,3 +1,5 @@
+rsisa/mask_rcnn/model/
+rsisa/mask_rcnn/data/
 data/
 
 # Byte-compiled / optimized / DLL files

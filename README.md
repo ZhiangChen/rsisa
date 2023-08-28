@@ -6,7 +6,7 @@
   <img src="./docs/figure2.png" alt="Image 2" style="width: 40%; margin-left: 3px;">
 </div>
 
-Instance segmentation generates pixel-level masks for each individual instance and assignes a unique label or identifier to each mask. This package provides efficient methods to address the two critical data-processing challenges that hinder instance segmentation applications in remote sensing.
+Instance segmentation generates pixel-level masks for each individual instance and assignes a unique label or identifier to each mask. This package provides efficient methods to address the two critical data-processing challenges that limit instance segmentation applications in remote sensing.
 
 
 ## Installation
