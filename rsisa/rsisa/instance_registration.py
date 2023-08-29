@@ -47,7 +47,7 @@ class Instance_Registration(object):
             detection_threshold (float, optional): only instances with detection scores greater than the detection_threshold will be considered for instance registration. Defaults to 0.75.
             segmentation_threshold (float, optional): only pixels with segmentation scores greater than the segmentation threshold will be considered for instance registration. Defaults to 0.5.
             iou_threshold (float, optional): if polygons from two instances at their overlap region exceed the iou_threshold, the two instances will be merged. Defaults to 0.5.
-            disable_merge (bool, optional): skip instance registration in True. Defaults to False.
+            disable_merge (bool, optional): skip instance registration if True. Defaults to False.
             test (bool, optional): set True if masks in pickle files has three dimensions; set False for four dimensions. This difference is caused by the fact that real instance segmentation and fake ellipse generation have different dimensions for masks. Defaults to True.
         """
         
@@ -158,11 +158,11 @@ class Instance_Registration(object):
             #print("processing tile: ", tile_indices)
             # post processing: detection confidence filter
             detect_scores = tile_data['scores']
-            id_strs = tile_data['ids']  ########################################################
+            id_strs = tile_data['ids'] 
             # prune data by detection_threshold
             masks = masks[detect_scores>self.detection_threshold]
+            id_strs = id_strs[detect_scores>self.detection_threshold] 
             detect_scores = detect_scores[detect_scores>self.detection_threshold]
-            id_strs = id_strs[detect_scores>self.detection_threshold]  ######################################################## 
             tif = rioxarray.open_rasterio(tif_name) 
             for idx, mask in enumerate(masks):
                 # post processing: segmentation confidence filter
@@ -634,4 +634,33 @@ class Instance_Registration(object):
         return (int(coords[0]), int(coords[1]))
     
     
+if __name__ == "__main__":
+    instance_dir = "/root/rsisa/rsisa/mask_rcnn/data/rock"
+    save_shp_file = "/root/rsisa/rsisa/mask_rcnn/data/rocks_merge.shp"
+    tif_map = "/root/rsisa/rsisa/mask_rcnn/data/0_0.tif"
+    iou_threshold = 0.5
+
+    tile_length = 10
+    overlap = 1
+    ellipse_max = 1.0
+    pixel_size = 0.00728542 
+    detection_threshold = 0.55
+    segmentation_threshold = 0.5
     
+    ir = Instance_Registration(instance_dir, 
+                            save_shp_file,
+                            tif_width_pixel=tile_length/pixel_size,
+                            tif_height_pixel=tile_length/pixel_size,
+                            tif_width_res=pixel_size,
+                            tif_height_res=-pixel_size,
+                            tif_map_file=tif_map,
+                            tile_overlap_ratio=overlap/tile_length,
+                            detection_threshold=detection_threshold, 
+                            segmentation_threshold=segmentation_threshold, 
+                            iou_threshold=iou_threshold, 
+                            disable_merge=False, 
+                            test=False,
+                            unzip=True)
+    
+    updated_tile_files, timestamps = ir.start_registration()
+    ir.combine_shapefiles()
